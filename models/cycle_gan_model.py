@@ -3,6 +3,8 @@ import itertools
 from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
+from vgg import Vgg16
+import utils
 
 
 class CycleGANModel(BaseModel):
@@ -51,6 +53,14 @@ class CycleGANModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
+        self.vgg = Vgg16(requires_grad=False)
+        if len(self.gpu_ids) > 0:
+            assert(torch.cuda.is_available())
+            self.vgg.to(self.gpu_ids[0])
+            self.vgg = torch.nn.DataParallel(self.vgg, self.gpu_ids)  # multi-GPUs
+        self.l1_loss = torch.nn.L1Loss()
+        self.mse_loss = torch.nn.MSELoss()
+
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
@@ -111,10 +121,21 @@ class CycleGANModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.fake_B = self.netG_A(self.real_A)  # G_A(A)
-        self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))
-        self.fake_A = self.netG_B(self.real_B)  # G_B(B)
-        self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
+        self.fake_B = self.netG_A(self.real_A)  # G_A(A)    motion1->normal2
+        self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))   normal2->motion1
+        self.fake_A = self.netG_B(self.real_B)  # G_B(B)    normal1->motion2
+        self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))   motion2->normal1
+
+        self.features_style_motion1 = self.vgg(utils.normalize_batch(self.real_A))
+        self.gram_style_motion1 = [utils.gram_matrix(y) for y in self.features_style_motion1]
+        self.features_style_motion2 = self.vgg(utils.normalize_batch(self.rec_A))
+        self.gram_style_motion2 = [utils.gram_matrix(y) for y in self.features_style_motion2]
+
+        self.features_style_normal1 = self.vgg(utils.normalize_batch(self.real_B))
+        self.gram_style_normal1 = [utils.gram_matrix(y) for y in self.features_style_normal1]
+        self.features_style_normal2 = self.vgg(utils.normalize_batch(self.rec_B))
+        self.gram_style_normal2 = [utils.gram_matrix(y) for y in self.features_style_normal2]
+
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
@@ -153,6 +174,12 @@ class CycleGANModel(BaseModel):
         lambda_idt = self.opt.lambda_identity
         lambda_A = self.opt.lambda_A
         lambda_B = self.opt.lambda_B
+        lambda_percep_wt = 20
+        lambda_style_wt = 0.0001
+        lambda_content_wt = 0.0001
+        lambda_percept_list = [1,1,1,1]
+        lambda_style_list = [1,0,0,1]
+        lambda_content_list = [0,1,0,0]
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
@@ -173,8 +200,43 @@ class CycleGANModel(BaseModel):
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
+
+        perceptual = 0
+        # Perceptual loss of motion
+        for i,ft_1,ft_2 in enumerate(zip(self.features_style_motion1, self.features_style_motion2)):
+            perceptual += self.l1_loss(ft_1,ft_2)
+            perceptual *= lambda_percept_list[i]
+        # Perceptual loss of normal
+        for ft_1,ft_2 in zip(self.features_style_normal1, self.features_style_normal2):
+            perceptual += self.l1_loss(ft_1,ft_2)
+            perceptual *= lambda_percept_list[i]
+        perceptual *= lambda_percep_wt
+
+        style = 0
+        # style loss of motion
+        for i,gm_1,gm_2 in enumerate(zip(self.gram_style_motion1, self.gram_style_motion2)):
+            style += self.mse_loss(gm_1,gm_2)
+            style *= lambda_style_list[i]
+       # style loss of normal
+        for i,gm_1,gm_2 in enumerate(zip(self.gram_style_normal1, self.gram_style_normal2)):
+            style += self.mse_loss(gm_1,gm_2)
+            style *= lambda_style_list[i]
+        style *= lambda_style_wt
+        
+
+        content = 0
+        # Content loss of motion
+        for i,ft_1,ft_2 in enumerate(zip(self.features_style_motion1, self.features_style_motion2)):
+            content += self.mse_loss(ft_1,ft_2)
+            content *= lambda_content_list[i]
+        # Content loss of normal
+        for ft_1,ft_2 in zip(self.features_style_normal1, self.features_style_normal2):
+            content += self.mse_loss(ft_1,ft_2)
+            content *= lambda_content_list[i]
+        content *= lambda_content_wt
+
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + content + style + perceptual
         self.loss_G.backward()
 
     def optimize_parameters(self):
