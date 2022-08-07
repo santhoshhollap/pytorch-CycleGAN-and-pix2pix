@@ -3,8 +3,8 @@ import itertools
 from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
-from vgg import Vgg16
-import utils
+from .vgg import Vgg16
+from . import utils
 
 
 class CycleGANModel(BaseModel):
@@ -204,36 +204,36 @@ class CycleGANModel(BaseModel):
         perceptual = 0
         # Perceptual loss of motion
         for i,ft_1,ft_2 in enumerate(zip(self.features_style_motion1, self.features_style_motion2)):
-            perceptual += self.l1_loss(ft_1,ft_2)
-            perceptual *= lambda_percept_list[i]
+            perceptual = perceptual + self.l1_loss(ft_1,ft_2)
+            perceptual = perceptual * lambda_percept_list[i]
         # Perceptual loss of normal
         for ft_1,ft_2 in zip(self.features_style_normal1, self.features_style_normal2):
-            perceptual += self.l1_loss(ft_1,ft_2)
-            perceptual *= lambda_percept_list[i]
-        perceptual *= lambda_percep_wt
+            perceptual = perceptual + self.l1_loss(ft_1,ft_2)
+            perceptual =perceptual * lambda_percept_list[i]
+        perceptual = perceptual * lambda_percep_wt
 
         style = 0
         # style loss of motion
         for i,gm_1,gm_2 in enumerate(zip(self.gram_style_motion1, self.gram_style_motion2)):
-            style += self.mse_loss(gm_1,gm_2)
-            style *= lambda_style_list[i]
+            style = style + self.mse_loss(gm_1,gm_2)
+            style = style * lambda_style_list[i]
        # style loss of normal
         for i,gm_1,gm_2 in enumerate(zip(self.gram_style_normal1, self.gram_style_normal2)):
-            style += self.mse_loss(gm_1,gm_2)
-            style *= lambda_style_list[i]
-        style *= lambda_style_wt
+            style = style + self.mse_loss(gm_1,gm_2)
+            style = style * lambda_style_list[i]
+        style = style * lambda_style_wt
         
 
         content = 0
         # Content loss of motion
         for i,ft_1,ft_2 in enumerate(zip(self.features_style_motion1, self.features_style_motion2)):
-            content += self.mse_loss(ft_1,ft_2)
-            content *= lambda_content_list[i]
+            content = content + self.mse_loss(ft_1,ft_2)
+            content = content * lambda_content_list[i]
         # Content loss of normal
         for ft_1,ft_2 in zip(self.features_style_normal1, self.features_style_normal2):
-            content += self.mse_loss(ft_1,ft_2)
-            content *= lambda_content_list[i]
-        content *= lambda_content_wt
+            content = content + self.mse_loss(ft_1,ft_2)
+            content = content * lambda_content_list[i]
+        content =content * lambda_content_wt
 
         # combined loss and calculate gradients
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + content + style + perceptual

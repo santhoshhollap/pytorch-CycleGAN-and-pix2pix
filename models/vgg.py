@@ -7,11 +7,16 @@ from torchvision import models
 class Vgg16(torch.nn.Module):
     def __init__(self, requires_grad=False):
         super(Vgg16, self).__init__()
-        vgg_pretrained_features = models.vgg16(pretrained=True).features
+        vgg_pretrained_features = models.vgg16(pretrained=True).features.eval()
         self.slice1 = torch.nn.Sequential()
         self.slice2 = torch.nn.Sequential()
         self.slice3 = torch.nn.Sequential()
         self.slice4 = torch.nn.Sequential()
+
+        for i,layer in enumerate(vgg_pretrained_features.children()):
+            if isinstance(layer, nn.ReLU):
+                vgg_pretrained_features[i] = nn.ReLU(inplace=False)
+
         for x in range(4):
             self.slice1.add_module(str(x), vgg_pretrained_features[x])
         for x in range(4, 9):
