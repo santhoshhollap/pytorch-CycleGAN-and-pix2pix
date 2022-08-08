@@ -13,9 +13,9 @@ class Vgg16(torch.nn.Module):
         self.slice3 = torch.nn.Sequential()
         self.slice4 = torch.nn.Sequential()
 
-        for i,layer in enumerate(vgg_pretrained_features.children()):
-            if isinstance(layer, torch.nn.ReLU):
-                vgg_pretrained_features[i] = torch.nn.ReLU(inplace=False)
+        # for i,layer in enumerate(vgg_pretrained_features.children()):
+        #     if isinstance(layer, torch.nn.ReLU):
+        #         vgg_pretrained_features[i] = torch.nn.ReLU(inplace=False)
 
         for x in range(4):
             self.slice1.add_module(str(x), vgg_pretrained_features[x])

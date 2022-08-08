@@ -53,16 +53,10 @@ class CycleGANModel(BaseModel):
             opt (Option class)-- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
         BaseModel.__init__(self, opt)
-        torch.autograd.set_detect_anomaly(True)
         self.vgg = Vgg16(requires_grad=False)
-        # print(self.vgg.tempVGG.children)
         if len(self.gpu_ids) > 0:
             assert(torch.cuda.is_available())
             self.vgg.to(self.gpu_ids[0])
-            self.vgg = torch.nn.DataParallel(self.vgg, self.gpu_ids)  # multi-GPUs
-        self.l1_loss = torch.nn.L1Loss()
-        self.mse_loss = torch.nn.MSELoss()
-
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
         self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
@@ -86,15 +80,13 @@ class CycleGANModel(BaseModel):
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, opt.netG, opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
-        # print(self.netG_A.children)
-        # print(self.netG_B.children)
+
         if self.isTrain:  # define discriminators
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf, opt.netD,
                                             opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
             self.netD_B = networks.define_D(opt.input_nc, opt.ndf, opt.netD,
                                             opt.n_layers_D, opt.norm, opt.init_type, opt.init_gain, self.gpu_ids)
-        # print(self.netD_A.children)
-        # print(self.netD_B.children)
+
         if self.isTrain:
             if opt.lambda_identity > 0.0:  # only works when input and output images have the same number of channels
                 assert(opt.input_nc == opt.output_nc)
@@ -125,21 +117,20 @@ class CycleGANModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
-        self.fake_B = self.netG_A(self.real_A)  # G_A(A)    motion1->normal2
-        self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))   normal2->motion1
-        self.fake_A = self.netG_B(self.real_B)  # G_B(B)    normal1->motion2
-        self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))   motion2->normal1
+        self.fake_B = self.netG_A(self.real_A)  # G_A(A)
+        self.rec_A = self.netG_B(self.fake_B)   # G_B(G_A(A))
+        self.fake_A = self.netG_B(self.real_B)  # G_B(B)
+        self.rec_B = self.netG_A(self.fake_A)   # G_A(G_B(B))
 
-        self.features_style_motion1 = self.vgg(utils.normalize_batch(self.real_A.detach()))
+        self.features_style_motion1 = self.vgg(utils.normalize_batch(self.real_A.clone()))
         self.gram_style_motion1 = [utils.gram_matrix(y) for y in self.features_style_motion1]
         self.features_style_motion2 = self.vgg(utils.normalize_batch(self.rec_A.clone()))
         self.gram_style_motion2 = [utils.gram_matrix(y) for y in self.features_style_motion2]
 
-        self.features_style_normal1 = self.vgg(utils.normalize_batch(self.real_B.detach()))
+        self.features_style_normal1 = self.vgg(utils.normalize_batch(self.real_B.clone()))
         self.gram_style_normal1 = [utils.gram_matrix(y) for y in self.features_style_normal1]
         self.features_style_normal2 = self.vgg(utils.normalize_batch(self.rec_B.clone()))
         self.gram_style_normal2 = [utils.gram_matrix(y) for y in self.features_style_normal2]
-
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
@@ -184,6 +175,7 @@ class CycleGANModel(BaseModel):
         lambda_percept_list = [1,1,1,1]
         lambda_style_list = [1,0,0,1]
         lambda_content_list = [0,1,0,0]
+
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
@@ -204,6 +196,7 @@ class CycleGANModel(BaseModel):
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
+        
 
         perceptual = 0
         # Perceptual loss of motion
@@ -227,7 +220,6 @@ class CycleGANModel(BaseModel):
             style = style * i
         style = style * lambda_style_wt
         
-
         content = 0
         # Content loss of motion
         for i,ft_1,ft_2 in zip(lambda_content_list , self.features_style_motion1, self.features_style_motion2):
