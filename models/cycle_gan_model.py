@@ -197,6 +197,8 @@ class CycleGANModel(BaseModel):
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
         
+        self.mse_loss = torch.nn.MSELoss()
+        self.l1_loss = torch.nn.L1Loss()
 
         perceptual = 0
         # Perceptual loss of motion
